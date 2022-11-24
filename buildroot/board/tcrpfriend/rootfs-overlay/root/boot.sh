@@ -1,15 +1,15 @@
 #!/bin/bash
 #
 # Author :
-# Date : 221001
-# Version : 0.0.1
+# Date : 221021
+# Version : 0.0.3
 # User Variables :
 ###############################################################################
 
-BOOTVER="0.0.1"
+BOOTVER="0.0.3"
 FRIENDLOG="/mnt/tcrp/friendlog.log"
-
-###############################################################################
+RSS_SERVER="https://raw.githubusercontent.com/pocopico/redpill-load/develop"
+AUTOUPDATES="1"
 
 function version() {
     shift 1
@@ -21,6 +21,10 @@ function history() {
     cat <<EOF
     --------------------------------------------------------------------------------------
     0.0.1 Initial Release
+    0.0.2 Added the option to disable TCRP Friend auto update. Default if true.
+    0.0.3 Added smallfixnumber to display current update version on boot
+
+    Current Version : ${BOOTVER}
     --------------------------------------------------------------------------------------
 EOF
 }
@@ -39,9 +43,16 @@ function upgradefriend() {
 
     if [ ! -z "$IP" ]; then
 
+        if [ "${friendautoupd}" = "false" ]; then
+            msgwarning "TCRP Friend auto update disabled\n"
+            return
+        else
+            friendwillupdate="1"
+        fi
+
         echo -n "Checking for latest friend -> "
         URL=$(curl --connect-timeout 15 -s --insecure -L https://api.github.com/repos/pocopico/tcrpfriend/releases/latest | jq -r -e .assets[].browser_download_url | grep chksum)
-        curl -s --insecure -L $URL -O
+        [ -n "$URL" ] && curl -s --insecure -L $URL -O
 
         if [ -f chksum ]; then
             FRIENDVERSION="$(grep VERSION chksum | awk -F= '{print $2}')"
@@ -56,8 +67,8 @@ function upgradefriend() {
                 FRIENDVERSION="$(grep VERSION chksum | awk -F= '{print $2}')"
                 BZIMAGESHA256="$(grep bzImage-friend chksum | awk '{print $1}')"
                 INITRDSHA256="$(grep initrd-friend chksum | awk '{print $1}')"
-                [ "$(sha256sum bzImage-friend | awk '{print $1}')" = "$BZIMAGESHA256" ] && [ "$(sha256sum initrd-friend | awk '{print $1}')" = "$INITRDSHA256" ] && cp -f bzImage-friend /mnt/tcrp/ && msgnormal "bzImage OK!"
-                [ "$(sha256sum bzImage-friend | awk '{print $1}')" = "$BZIMAGESHA256" ] && [ "$(sha256sum initrd-friend | awk '{print $1}')" = "$INITRDSHA256" ] && cp -f initrd-friend /mnt/tcrp/ && msgnormal "initrd-friend OK!"
+                [ "$(sha256sum bzImage-friend | awk '{print $1}')" = "$BZIMAGESHA256" ] && [ "$(sha256sum initrd-friend | awk '{print $1}')" = "$INITRDSHA256" ] && cp -f bzImage-friend /mnt/tcrp/ && msgnormal "bzImage OK! \n"
+                [ "$(sha256sum bzImage-friend | awk '{print $1}')" = "$BZIMAGESHA256" ] && [ "$(sha256sum initrd-friend | awk '{print $1}')" = "$INITRDSHA256" ] && cp -f initrd-friend /mnt/tcrp/ && msgnormal "initrd-friend OK! \n"
                 msgnormal "TCRP FRIEND HAS BEEN UPDATED, GOING FOR REBOOT\n"
                 countdown "REBOOT"
                 reboot -f
@@ -69,7 +80,7 @@ function upgradefriend() {
 }
 
 function getstaticmodule() {
-    redpillextension="https://github.com/pocopico/rp-ext/raw/main/redpill/rpext-index.json"
+    redpillextension="https://github.com/pocopico/rp-ext/raw/main/redpill${redpillmake}/rpext-index.json"
     SYNOMODEL="$(echo $model | sed -e 's/+/p/g' | tr '[:upper:]' '[:lower:]')_${buildnumber}"
 
     cd /root
@@ -161,6 +172,7 @@ function extractramdisk() {
     fi
 
     version="${major}.${minor}.${micro}-${buildnumber}"
+    smallfixnumber="${smallfixnumber}"
 
 }
 
@@ -181,6 +193,7 @@ function patchramdisk() {
     echo "Patches to be applied : $PATCHES"
 
     cd $temprd
+    . $temprd/etc/VERSION
     for patch in $PATCHES; do
         echo "Applying patch $patch in dir $PWD"
         patch -p1 <$patch
@@ -248,13 +261,13 @@ function patchramdisk() {
 
     origrdhash=$(sha256sum /mnt/tcrp-p2/rd.gz | awk '{print $1}')
     origzimghash=$(sha256sum /mnt/tcrp-p2/zImage | awk '{print $1}')
+    version="${major}.${minor}.${micro}-${buildnumber}"
+    smallfixnumber="${smallfixnumber}"
 
     updateuserconfigfield "general" "rdhash" "$origrdhash"
     updateuserconfigfield "general" "zimghash" "$origzimghash"
     updateuserconfigfield "general" "version" "${major}.${minor}.${micro}-${buildnumber}"
-
-    version="${major}.${minor}.${micro}-${buildnumber}"
-
+    updateuserconfigfield "general" "smallfixnumber" "${smallfixnumber}"
     updategrubconf
 
 }
@@ -266,7 +279,7 @@ function updateuserconfig() {
     if [ "$generalblock" = "null" ] || [ -n "$generalblock" ]; then
         echo "Result=${generalblock}, File does not contain general block, adding block"
 
-        for field in model version zimghash rdhash usb_line sata_line; do
+        for field in model version smallfixnumber redpillmake zimghash rdhash usb_line sata_line; do
             jsonfile=$(jq ".general+={\"$field\":\"\"}" $userconfigfile)
             echo $jsonfile | jq . >$userconfigfile
         done
@@ -312,7 +325,7 @@ function gethw() {
 
     echo -ne "Loader BUS: $(msgnormal "$LOADER_BUS\n")"
     echo -ne "Running on $(cat /proc/cpuinfo | grep "model name" | awk -F: '{print $2}' | wc -l) Processor $(cat /proc/cpuinfo | grep "model name" | awk -F: '{print $2}' | uniq) With $(free -h | grep Mem | awk '{print $2}') Memory\n"
-    echo -ne "System has $(lspci -nn | egrep -e 100 -e 106 | wc -l) HBAs and $(lspci -nn | egrep -e 200 | wc -l) Network cards\n"
+    echo -ne "System has $(lspci -nn | egrep -e "\[0100\]" -e "\[0106\]" | wc -l) HBAs and $(lspci -nn | egrep -e "\[0200\]" | wc -l) Network cards\n"
 }
 
 function checkmachine() {
@@ -412,21 +425,43 @@ setmac() {
 
     # Set custom MAC if defined
 
-    ethdev=$(ip a | grep UP | grep -v LOOP | head -1 | awk '{print $2}' | sed -e 's/://g')
+    ethdev=$(ip a | grep UP | grep -vi LOOP | head -1 | awk '{print $2}' | sed -e 's/://g')
     curmac=$(ip link | grep -A 1 $ethdev | tail -1 | awk '{print $2}' | sed -e 's/://g' | tr '[:lower:]' '[:upper:]')
+    MAC="${mac1:0:2}:${mac1:2:2}:${mac1:4:2}:${mac1:6:2}:${mac1:8:2}:${mac1:10:2}"
+    ISMACREAL="$(ip a | grep link | grep -v loop | awk '{print $2}' | grep -i "${MAC}" | wc -l)"
 
-    if [ -n "${mac1}" ] && [ "${curmac}" != "${mac1}" ]; then
-        MAC="${mac1:0:2}:${mac1:2:2}:${mac1:4:2}:${mac1:6:2}:${mac1:8:2}:${mac1:10:2}"
-        echo "Setting MAC to ${MAC}"
+    if [ -n "${mac1}" ] && [ "${curmac}" != "${mac1}" ] && [ $ISMACREAL -eq 0 ]; then
+        echo "Setting MAC from ${curmac} to ${MAC}" | tee -a boot.log
         ip link set dev $ethdev address ${MAC} >/dev/null 2>&1 &&
             (/etc/init.d/S41dhcpcd restart >/dev/null 2>&1) || true
     fi
 
 }
 
+setnetwork() {
+
+    ethdev=$(ip a | grep UP | grep -v LOOP | head -1 | awk '{print $2}' | sed -e 's/://g')
+
+    echo "Network settings are set to static proceeding setting static IP settings" | tee -a boot.log
+    staticip="$(jq -r -e .ipsettings.ipaddr /mnt/tcrp/user_config.json)"
+    staticdns="$(jq -r -e .ipsettings.ipdns /mnt/tcrp/user_config.json)"
+    staticgw="$(jq -r -e .ipsettings.ipgw /mnt/tcrp/user_config.json)"
+    staticproxy="$(jq -r -e .ipsettings.ipproxy /mnt/tcrp/user_config.json)"
+
+    [ -n "$staticip" ] && [ $(ip a | grep $staticip | wc -l) -eq 0 ] && ip a add "$staticip" dev $ethdev | tee -a boot.log
+    [ -n "$staticdns" ] && [ $(grep ${staticdns} /etc/resolv.conf | wc -l) -eq 0 ] && sed -i "a nameserver $staticdns" /etc/resolv.conf | tee -a boot.log
+    [ -n "$staticgw" ] && [ $(ip route | grep "default via ${staticgw}" | wc -l) -eq 0 ] && ip route add default via $staticgw dev $ethdev | tee -a boot.log
+    [ -n "$staticproxy" ] &&
+        export HTTP_PROXY="$staticproxy" && export HTTPS_PROXY="$staticproxy" &&
+        export http_proxy="$staticproxy" && export https_proxy="$staticproxy" | tee -a boot.log
+
+    IP="$(ip route get 1.1.1.1 2>/dev/null | grep $ethdev | awk '{print $7}')"
+
+}
+
 readconfig() {
 
-    LOADER_DISK=$(fdisk -l | grep -v raid | grep -v W95 | grep Linux | grep 48M | cut -c 1-8 | awk -F\/ '{print $3}')
+    LOADER_DISK=$(blkid | grep "6234-C863" | cut -c 1-8 | awk -F\/ '{print $3}')
     LOADER_BUS="$(udevadm info --query property --name /dev/${LOADER_DISK} | grep -i ID_BUS | awk -F= '{print $2}')"
 
     userconfigfile=/mnt/tcrp/user_config.json
@@ -434,6 +469,10 @@ readconfig() {
     if [ -f $userconfigfile ]; then
         model="$(jq -r -e '.general .model' $userconfigfile)"
         version="$(jq -r -e '.general .version' $userconfigfile)"
+        smallfixnumber="$(jq -r -e '.general .smallfixnumber' $userconfigfile)"
+        redpillmake="$(jq -r -e '.general .redpillmake' $userconfigfile)"
+        friendautoupd="$(jq -r -e '.general .friendautoupd' $userconfigfile)"
+        hidesensitive="$(jq -r -e '.general .hidesensitive' $userconfigfile)"
         serial="$(jq -r -e '.extra_cmdline .sn' $userconfigfile)"
         rdhash="$(jq -r -e '.general .rdhash' $userconfigfile)"
         zimghash="$(jq -r -e '.general .zimghash' $userconfigfile)"
@@ -446,7 +485,7 @@ readconfig() {
 
 mountall() {
 
-    LOADER_DISK=$(fdisk -l | grep -v raid | grep -v W95 | grep Linux | grep 48M | cut -c 1-8 | awk -F\/ '{print $3}')
+    LOADER_DISK=$(blkid | grep "6234-C863" | cut -c 1-8 | awk -F\/ '{print $3}')
 
     [ ! -d /mnt/tcrp ] && mkdir /mnt/tcrp
     [ ! -d /mnt/tcrp-p1 ] && mkdir /mnt/tcrp-p1
@@ -460,8 +499,47 @@ mountall() {
 
 function boot() {
 
+    # Welcome message
+    welcome
+
+    # user_config.json ipsettings block
+    # user_config.json ipsettings block
+
+    #  "ipsettings" : {
+    #     "ipset": "static",
+    #     "ipaddr":"192.168.71.146/24",
+    #     "ipgw" : "192.168.71.1",
+    #     "ipdns": "",
+    #     "ipproxy" : ""
+    # },
+
+    if [ "$(jq -r -e .ipsettings.ipset /mnt/tcrp/user_config.json)" = "static" ]; then
+
+        setnetwork
+        getip
+    else
+        # Set Mac Address according to user_config
+        setmac
+
+        # Get IP Address after setting new mac address to display IP
+        getip
+    fi
+
+    # Check ip upgrade is required
+    checkupgrade
+
+    # Get USB list and set VID-PID Automatically
+    getusb
+
     # check if new TCRP Friend version is available to download
     upgradefriend
+
+    if [ -f /mnt/tcrp/stopatfriend ]; then
+        echo "Stop at friend detected, stopping boot"
+        rm -f /mnt/tcrp/stopatfriend
+        touch /root/stoppedatrequest
+        exit 0
+    fi
 
     if grep -q "debugfriend" /proc/cmdline; then
         echo "Debug Friend set, stopping boot process"
@@ -469,7 +547,11 @@ function boot() {
     fi
 
     if [ "$LOADER_BUS" = "ata" ]; then
+
         CMDLINE_LINE=$(jq -r -e '.general .sata_line' /mnt/tcrp/user_config.json)
+        # Check dom size and set max size accordingly
+        CMDLINE_LINE+=" dom_szmax=$(fdisk -l /dev/${LOADER_DISK} | head -1 | awk -F: '{print $2}' | awk '{ print $1*1024}') "
+
     else
         CMDLINE_LINE=$(jq -r -e '.general .usb_line' /mnt/tcrp/user_config.json)
     fi
@@ -482,10 +564,20 @@ function boot() {
     gethw
 
     echo "IP Address : $(msgnormal "${IP}\n")"
-    echo -n "Model : $(msgnormal " $model") , Serial : $(msgnormal "$serial"), Mac : $(msgnormal "$mac1") DSM Version : $(msgnormal "$version\n")"
+    echo -n "Model : $(msgnormal " $model") , Serial : $(msgnormal "$serial"), Mac : $(msgnormal "$mac1") DSM Version : $(msgnormal "$version") Update : $(msgnormal "$smallfixnumber") RedPillMake : $(msgnormal "${redpillmake}\n")"
 
     echo "zImage : ${MOD_ZIMAGE_FILE} initrd : ${MOD_RDGZ_FILE}"
     echo "cmdline : ${CMDLINE_LINE}"
+
+    # Check netif_num matches the number of configured mac addresses as if these does not match redpill will cause a KP
+    echo ${CMDLINE_LINE} >/tmp/cmdline.out
+    while IFS=" " read -r -a line; do
+        printf "%s\n" "${line[@]}"
+    done </tmp/cmdline.out | egrep -i "sataportmap|sn|pid|vid|mac|hddhotplug|diskidxmap|netif_num" | sort >/tmp/cmdline.check
+
+    . /tmp/cmdline.check
+
+    [ $(grep mac /tmp/cmdline.check | wc -l) != $netif_num ] && msgalert "FAILED to match the count of configured netif_num and mac addresses, DSM will panic, exiting so you can fix this\n" && exit 99
 
     countdown "booting"
 
@@ -493,7 +585,14 @@ function boot() {
 
     echo "Loading kexec, nothing will be displayed here anymore ..."
 
-    kexec --noefi -l "${MOD_ZIMAGE_FILE}" --initrd "${MOD_RDGZ_FILE}" --command-line="${CMDLINE_LINE}"
+    [ "${hidesensitive}" = "true" ] && clear
+
+    if [ $(echo ${CMDLINE_LINE} | grep withefi | wc -l) -eq 1 ]; then
+        kexec -l "${MOD_ZIMAGE_FILE}" --initrd "${MOD_RDGZ_FILE}" --command-line="${CMDLINE_LINE}"
+    else
+        echo "Booting with noefi, please notice that this might cause issues"
+        kexec --noefi -l "${MOD_ZIMAGE_FILE}" --initrd "${MOD_RDGZ_FILE}" --command-line="${CMDLINE_LINE}"
+    fi
 
     kexec -e -a
 
@@ -519,20 +618,8 @@ function initialize() {
     # Read Configuration variables
     readconfig
 
-    # Welcome message
-    welcome
+    [ "${smallfixnumber}" = "null" ] && patchramdisk 2>&1 >>$FRIENDLOG
 
-    # Check ip upgrade is required
-    checkupgrade
-
-    # Set Mac Address according to user_config
-    setmac
-
-    # Get IP Address after setting new mac address to display IP
-    getip
-
-    # Get USB list and set VID-PID Automatically
-    getusb
 }
 
 case $1 in

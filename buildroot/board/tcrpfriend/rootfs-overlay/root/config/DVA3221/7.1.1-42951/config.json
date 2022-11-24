@@ -26,8 +26,8 @@
         ],
         "ramdisk": [
             "@@@COMMON@@@/ramdisk-001-disable-root-pwd.patch",
-      	    "@@@COMMON@@@/v7.0.1/ramdisk-002-init-script.patch",
-            "@@@COMMON@@@/v7.0.1/ramdisk-003-post-init-script.patch",
+      	    "@@@COMMON@@@/v7.1.1/ramdisk-002-init-script.patch",
+            "@@@COMMON@@@/v7.1.1/ramdisk-003-post-init-script-noatime.patch",
 			"@@@COMMON@@@/ramdisk-004-network-hosts.patch"
         ]
     },
@@ -59,7 +59,7 @@
     	    "SataPortMap": "1", 
             "DiskIdxMap": "0",
             "mac1": "",
-            "netif_num": 4,
+            "netif_num": 1,
 
             "syno_hw_version": "DVA3221",
             "syno_hdd_powerup_seq": 0,
